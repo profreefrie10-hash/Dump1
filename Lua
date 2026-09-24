@@ -1,30 +1,246 @@
--- mapdump.lua — Roblox Map Dumper (Delta Mobile)
+-- mapdump.lua — Roblox Map Dumper + GUI (Delta Mobile)
 -- ใช้: loadstring(game:HttpGet("<raw url>"))()
 
+local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+
 local hasWrite = type(writefile) == "function"
 local hasClipboard = type(setclipboard) == "function"
 
-local BATCH_SIZE = 500
-local BATCH_WAIT = 0.05
-local MAX_PARTS = 200000
-
-local dump = {
-    metadata = {
-        placeId = game.PlaceId,
-        jobId = game.JobId,
-        timestamp = os.date("%Y-%m-%d %H:%M:%S"),
-        executor = "Delta Mobile",
-        partCount = 0,
-        truncated = false
-    },
-    parts = {}
+local CONFIG = {
+    BATCH_SIZE = 500,
+    BATCH_WAIT = 0.05,
+    MAX_PARTS = 200000,
+    GUI_NAME = "MapDumperGUI"
 }
 
+-- === ลบ GUI เก่าถ้ามี ===
+local parentGui = (gethui and gethui()) or CoreGui
 pcall(function()
-    dump.metadata.gameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
+    local old = parentGui:FindFirstChild(CONFIG.GUI_NAME)
+    if old then old:Destroy() end
 end)
 
+-- === สร้าง GUI ===
+local gui = Instance.new("ScreenGui")
+gui.Name = CONFIG.GUI_NAME
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+gui.Parent = parentGui
+
+-- Main frame
+local main = Instance.new("Frame")
+main.Name = "Main"
+main.Size = UDim2.new(0, 220, 0, 260)
+main.Position = UDim2.new(0, 20, 0, 100)
+main.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+main.BorderSizePixel = 0
+main.Active = true
+main.Draggable = true
+main.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = main
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(60, 60, 80)
+stroke.Thickness = 1
+stroke.Parent = main
+
+-- Title bar
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 32)
+title.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+title.BorderSizePixel = 0
+title.Text = "Map Dumper"
+title.TextColor3 = Color3.fromRGB(230, 230, 240)
+title.TextSize = 14
+title.Font = Enum.Font.GothamBold
+title.Parent = main
+
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 10)
+titleCorner.Parent = title
+
+-- ปุ่มปิด GUI (มุมขวาบน)
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 26, 0, 26)
+closeBtn.Position = UDim2.new(1, -32, 0, 4)
+closeBtn.BackgroundColor3 = Color3.fromRGB(60, 30, 40)
+closeBtn.Text = "X"
+closeBtn.TextColor3 = Color3.fromRGB(240, 200, 210)
+closeBtn.TextSize = 14
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.BorderSizePixel = 0
+closeBtn.Parent = title
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 6)
+closeCorner.Parent = closeBtn
+
+-- Status label
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1, -20, 0, 40)
+status.Position = UDim2.new(0, 10, 0, 42)
+status.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
+status.BorderSizePixel = 0
+status.Text = "พร้อมใช้งาน"
+status.TextColor3 = Color3.fromRGB(180, 180, 200)
+status.TextSize = 12
+status.Font = Enum.Font.Gotham
+status.TextWrapped = true
+status.Parent = main
+
+local statusCorner = Instance.new("UICorner")
+statusCorner.CornerRadius = UDim.new(0, 6)
+statusCorner.Parent = status
+
+-- ปุ่ม เปิด/ปิด Dump
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(1, -20, 0, 40)
+toggleBtn.Position = UDim2.new(0, 10, 0, 92)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(40, 90, 60)
+toggleBtn.Text = "เริ่ม Dump"
+toggleBtn.TextColor3 = Color3.fromRGB(230, 255, 235)
+toggleBtn.TextSize = 14
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.BorderSizePixel = 0
+toggleBtn.Parent = main
+
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(0, 6)
+toggleCorner.Parent = toggleBtn
+
+-- Progress bar
+local progressBg = Instance.new("Frame")
+progressBg.Size = UDim2.new(1, -20, 0, 8)
+progressBg.Position = UDim2.new(0, 10, 0, 142)
+progressBg.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+progressBg.BorderSizePixel = 0
+progressBg.Parent = main
+
+local progressCorner = Instance.new("UICorner")
+progressCorner.CornerRadius = UDim.new(0, 4)
+progressCorner.Parent = progressBg
+
+local progressFill = Instance.new("Frame")
+progressFill.Size = UDim2.new(0, 0, 1, 0)
+progressFill.BackgroundColor3 = Color3.fromRGB(90, 200, 130)
+progressFill.BorderSizePixel = 0
+progressFill.Parent = progressBg
+
+local fillCorner = Instance.new("UICorner")
+fillCorner.CornerRadius = UDim.new(0, 4)
+fillCorner.Parent = progressFill
+
+-- Log area
+local logFrame = Instance.new("ScrollingFrame")
+logFrame.Size = UDim2.new(1, -20, 0, 90)
+logFrame.Position = UDim2.new(0, 10, 0, 158)
+logFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
+logFrame.BorderSizePixel = 0
+logFrame.ScrollBarThickness = 4
+logFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+logFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+logFrame.Parent = main
+
+local logCorner = Instance.new("UICorner")
+logCorner.CornerRadius = UDim.new(0, 6)
+logCorner.Parent = logFrame
+
+local logLayout = Instance.new("UIListLayout")
+logLayout.Padding = UDim.new(0, 3)
+logLayout.SortOrder = Enum.SortOrder.LayoutOrder
+logLayout.Parent = logFrame
+
+local logPad = Instance.new("UIPadding")
+logPad.PaddingTop = UDim.new(0, 6)
+logPad.PaddingLeft = UDim.new(0, 6)
+logPad.PaddingRight = UDim.new(0, 6)
+logPad.Parent = logFrame
+
+-- === ฟังก์ชัน log ลง GUI ===
+local function log(msg, color)
+    local line = Instance.new("TextLabel")
+    line.Size = UDim2.new(1, -12, 0, 16)
+    line.BackgroundTransparency = 1
+    line.Text = "> " .. msg
+    line.TextColor3 = color or Color3.fromRGB(180, 200, 180)
+    line.TextSize = 11
+    line.Font = Enum.Font.Code
+    line.TextXAlignment = Enum.TextXAlignment.Left
+    line.TextWrapped = false
+    line.Parent = logFrame
+
+    -- จำกัด log แค่ 50 บรรทัด
+    local count = 0
+    for _, ch in ipairs(logFrame:GetChildren()) do
+        if ch:IsA("TextLabel") then count = count + 1 end
+    end
+    if count > 50 then
+        for _, ch in ipairs(logFrame:GetChildren()) do
+            if ch:IsA("TextLabel") then ch:Destroy() break end
+        end
+    end
+
+    task.defer(function()
+        logFrame.CanvasPosition = Vector2.new(0, logFrame.AbsoluteCanvasSize.Y)
+    end)
+end
+
+-- === ฟังก์ชัน notify ===
+local function notify(text, isSuccess)
+    local n = Instance.new("Frame")
+    n.Size = UDim2.new(0, 240, 0, 60)
+    n.Position = UDim2.new(0.5, -120, 0, -70)
+    n.BackgroundColor3 = isSuccess and Color3.fromRGB(30, 70, 45) or Color3.fromRGB(70, 30, 40)
+    n.BorderSizePixel = 0
+    n.Parent = gui
+
+    local nc = Instance.new("UICorner")
+    nc.CornerRadius = UDim.new(0, 10)
+    nc.Parent = n
+
+    local ns = Instance.new("UIStroke")
+    ns.Color = isSuccess and Color3.fromRGB(90, 200, 130) or Color3.fromRGB(200, 90, 110)
+    ns.Thickness = 1.5
+    ns.Parent = n
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(1, -20, 1, 0)
+    label.Position = UDim2.new(0, 10, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = Color3.fromRGB(240, 240, 240)
+    label.TextSize = 14
+    label.Font = Enum.Font.GothamBold
+    label.TextWrapped = true
+    label.Parent = n
+
+    TweenService:Create(n, TweenInfo.new(0.4, Enum.EasingStyle.Quad), {
+        Position = UDim2.new(0.5, -120, 0, 30)
+    }):Play()
+
+    task.delay(3, function()
+        TweenService:Create(n, TweenInfo.new(0.4, Enum.EasingStyle.Quad), {
+            Position = UDim2.new(0.5, -120, 0, -70)
+        }):Play()
+        task.wait(0.5)
+        n:Destroy()
+    end)
+end
+
+-- === State ===
+local running = false
+local cancelled = false
+
+-- === ฟังก์ชันหลัก: dump ===
 local function r2(n) return math.floor(n * 100 + 0.5) / 100 end
 local function v3(v) return { x = r2(v.X), y = r2(v.Y), z = r2(v.Z) } end
 local function col(c) return { r = c.R, g = c.G, b = c.B } end
@@ -56,77 +272,158 @@ local function dumpPart(part)
     return d
 end
 
-local queue = {}
-local function collect(c)
-    for _, ch in ipairs(c:GetChildren()) do
-        if ch:IsA("BasePart") then table.insert(queue, ch) end
-        if #ch:GetChildren() > 0 then collect(ch) end
-    end
-end
-
-print("[MapDumper] กำลังสแกน...")
-collect(workspace)
-print(string.format("[MapDumper] เจอ %d Part", #queue))
-
-local total = math.min(#queue, MAX_PARTS)
-if #queue > MAX_PARTS then dump.metadata.truncated = true end
-
-local processed = 0
-local lastReport = tick()
-
-for i = 1, total do
-    local part = queue[i]
-    if part and part.Parent then
-        local ok, data = pcall(dumpPart, part)
-        if ok then table.insert(dump.parts, data) end
-    end
-    processed = processed + 1
-    if processed % BATCH_SIZE == 0 then
-        task.wait(BATCH_WAIT)
-        if tick() - lastReport >= 1 then
-            print(string.format("[MapDumper] %d/%d (%d%%)",
-                processed, total, math.floor(processed / total * 100)))
-            lastReport = tick()
+local function collectParts()
+    local queue = {}
+    local function scan(c)
+        for _, ch in ipairs(c:GetChildren()) do
+            if ch:IsA("BasePart") then table.insert(queue, ch) end
+            if #ch:GetChildren() > 0 then scan(ch) end
         end
     end
+    scan(workspace)
+    return queue
 end
 
-dump.metadata.partCount = #dump.parts
-print("[MapDumper] ประมวลเสร็จ: " .. dump.metadata.partCount .. " Part")
+local function runDump()
+    if running then return end
+    running = true
+    cancelled = false
 
-local ok, json = pcall(function() return HttpService:JSONEncode(dump) end)
-if not ok then warn("[MapDumper] Encode ล้มเหลว"); return dump end
+    toggleBtn.Text = "กำลังทำงาน... หยุด"
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(120, 50, 50)
+    status.Text = "กำลังสแกน..."
+    progressFill.Size = UDim2.new(0, 0, 1, 0)
+    log("เริ่มสแกน workspace", Color3.fromRGB(140, 200, 255))
 
-local sizeKB = math.floor(#json / 1024)
-print("[MapDumper] ขนาด: " .. sizeKB .. " KB")
+    local dump = {
+        metadata = {
+            placeId = game.PlaceId,
+            jobId = game.JobId,
+            timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+            executor = "Delta Mobile",
+            partCount = 0,
+            truncated = false
+        },
+        parts = {}
+    }
 
-local filename = "mapdump_" .. game.PlaceId .. "_" .. os.time() .. ".json"
-if hasWrite then
-    local ok2 = pcall(writefile, filename, json)
-    if ok2 then print("[MapDumper] บันทึก: " .. filename) end
-end
+    pcall(function()
+        dump.metadata.gameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
+    end)
 
-if hasClipboard and sizeKB < 500 then
-    local b64c = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-    local function b64(data)
-        local out, i, n = {}, 1, #data
-        while i <= n do
-            local b1, b2, b3 = data:byte(i) or 0, data:byte(i+1) or 0, data:byte(i+2) or 0
-            local c1 = math.floor(b1 / 4)
-            local c2 = (b1 % 4) * 16 + math.floor(b2 / 16)
-            local c3 = (b2 % 16) * 4 + math.floor(b3 / 64)
-            local c4 = b3 % 64
-            out[#out+1] = b64c:sub(c1+1, c1+1)
-            out[#out+1] = b64c:sub(c2+1, c2+1)
-            out[#out+1] = i+1 <= n and b64c:sub(c3+1, c3+1) or "="
-            out[#out+1] = i+2 <= n and b64c:sub(c4+1, c4+1) or "="
-            i = i + 3
+    local queue = collectParts()
+    log("เจอ " .. #queue .. " Part", Color3.fromRGB(140, 255, 180))
+
+    local total = math.min(#queue, CONFIG.MAX_PARTS)
+    if #queue > CONFIG.MAX_PARTS then dump.metadata.truncated = true end
+
+    local processed = 0
+    local lastReport = tick()
+
+    for i = 1, total do
+        if cancelled then
+            log("ผู้ใช้หยุดกลางทาง", Color3.fromRGB(255, 180, 120))
+            break
         end
-        return table.concat(out)
+
+        local part = queue[i]
+        if part and part.Parent then
+            local ok, data = pcall(dumpPart, part)
+            if ok then table.insert(dump.parts, data) end
+        end
+
+        processed = processed + 1
+
+        if processed % CONFIG.BATCH_SIZE == 0 then
+            task.wait(CONFIG.BATCH_WAIT)
+            if tick() - lastReport >= 1 then
+                local pct = processed / total
+                progressFill.Size = UDim2.new(pct, 0, 1, 0)
+                status.Text = string.format("กำลัง dump... %d/%d (%d%%)",
+                    processed, total, math.floor(pct * 100))
+                lastReport = tick()
+            end
+        end
     end
-    pcall(setclipboard, "MAPDUMP_B64:" .. game.PlaceId .. ":" .. b64(json))
-    print("[MapDumper] คัดลอก base64 แล้ว")
+
+    progressFill.Size = UDim2.new(1, 0, 1, 0)
+    dump.metadata.partCount = #dump.parts
+    log("ประมวลเสร็จ: " .. dump.metadata.partCount .. " Part", Color3.fromRGB(140, 255, 180))
+
+    status.Text = "กำลัง encode JSON..."
+    local ok, json = pcall(function() return HttpService:JSONEncode(dump) end)
+    if not ok then
+        warn("[MapDumper] Encode ล้มเหลว")
+        status.Text = "Encode ล้มเหลว"
+        log("Encode ล้มเหลว", Color3.fromRGB(255, 120, 120))
+        running = false
+        toggleBtn.Text = "เริ่ม Dump"
+        toggleBtn.BackgroundColor3 = Color3.fromRGB(40, 90, 60)
+        return
+    end
+
+    local sizeKB = math.floor(#json / 1024)
+    log("ขนาด JSON: " .. sizeKB .. " KB", Color3.fromRGB(200, 200, 255))
+
+    local filename = "mapdump_" .. game.PlaceId .. "_" .. os.time() .. ".json"
+    local saved = false
+
+    if hasWrite then
+        local ok2 = pcall(writefile, filename, json)
+        if ok2 then
+            saved = true
+            log("บันทึก: " .. filename, Color3.fromRGB(140, 255, 180))
+        else
+            log("เขียนไฟล์พัง", Color3.fromRGB(255, 120, 120))
+        end
+    else
+        log("writefile ไม่มี", Color3.fromRGB(255, 180, 120))
+    end
+
+    if hasClipboard and sizeKB < 500 then
+        local b64c = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+        local function b64(data)
+            local out, i, n = {}, 1, #data
+            while i <= n do
+                local b1, b2, b3 = data:byte(i) or 0, data:byte(i+1) or 0, data:byte(i+2) or 0
+                local c1 = math.floor(b1 / 4)
+                local c2 = (b1 % 4) * 16 + math.floor(b2 / 16)
+                local c3 = (b2 % 16) * 4 + math.floor(b3 / 64)
+                local c4 = b3 % 64
+                out[#out+1] = b64c:sub(c1+1, c1+1)
+                out[#out+1] = b64c:sub(c2+1, c2+1)
+                out[#out+1] = i+1 <= n and b64c:sub(c3+1, c3+1) or "="
+                out[#out+1] = i+2 <= n and b64c:sub(c4+1, c4+1) or "="
+                i = i + 3
+            end
+            return table.concat(out)
+        end
+        pcall(setclipboard, "MAPDUMP_B64:" .. game.PlaceId .. ":" .. b64(json))
+        log("คัดลอก base64 → คลิปบอร์ด", Color3.fromRGB(180, 220, 255))
+    end
+
+    status.Text = saved and ("เสร็จ — " .. dump.metadata.partCount .. " Part") or "เสร็จ (ดู log)"
+    log("เสร็จสิ้น", Color3.fromRGB(140, 255, 180))
+    notify("Dump เสร็จสิ้น: " .. dump.metadata.partCount .. " Part", true)
+
+    running = false
+    toggleBtn.Text = "เริ่ม Dump อีกครั้ง"
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(40, 90, 60)
 end
 
-print("[MapDumper] เสร็จสิ้น — ไฟล์: " .. filename)
-return dump
+-- === ปุ่มกด ===
+toggleBtn.MouseButton1Click:Connect(function()
+    if running then
+        cancelled = true
+        log("กำลังหยุด...", Color3.fromRGB(255, 180, 120))
+    else
+        task.spawn(runDump)
+    end
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+    gui:Destroy()
+end)
+
+log("โหลดเสร็จ — กดเริ่ม Dump", Color3.fromRGB(140, 255, 180))
+notify("Map Dumper พร้อมใช้งาน", true)
