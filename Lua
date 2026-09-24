@@ -1,0 +1,132 @@
+-- mapdump.lua — Roblox Map Dumper (Delta Mobile)
+-- ใช้: loadstring(game:HttpGet("<raw url>"))()
+
+local HttpService = game:GetService("HttpService")
+local hasWrite = type(writefile) == "function"
+local hasClipboard = type(setclipboard) == "function"
+
+local BATCH_SIZE = 500
+local BATCH_WAIT = 0.05
+local MAX_PARTS = 200000
+
+local dump = {
+    metadata = {
+        placeId = game.PlaceId,
+        jobId = game.JobId,
+        timestamp = os.date("%Y-%m-%d %H:%M:%S"),
+        executor = "Delta Mobile",
+        partCount = 0,
+        truncated = false
+    },
+    parts = {}
+}
+
+pcall(function()
+    dump.metadata.gameName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
+end)
+
+local function r2(n) return math.floor(n * 100 + 0.5) / 100 end
+local function v3(v) return { x = r2(v.X), y = r2(v.Y), z = r2(v.Z) } end
+local function col(c) return { r = c.R, g = c.G, b = c.B } end
+
+local function dumpPart(part)
+    local d = {
+        name = part.Name,
+        className = part.ClassName,
+        position = v3(part.Position),
+        size = v3(part.Size),
+        rotation = v3(part.Orientation),
+        color = col(part.Color),
+        material = part.Material.Name,
+        transparency = r2(part.Transparency),
+        canCollide = part.CanCollide,
+        anchored = part.Anchored,
+        parent = part.Parent and part.Parent:GetFullName() or "nil"
+    }
+    local mesh = part:FindFirstChildOfClass("SpecialMesh")
+    if mesh then
+        d.mesh = { meshId = mesh.MeshId, textureId = mesh.TextureId, scale = v3(mesh.Scale) }
+    end
+    local sa = part:FindFirstChildOfClass("SurfaceAppearance")
+    if sa then
+        d.surfaceAppearance = { colorMap = sa.ColorMap, normalMap = sa.NormalMap }
+    end
+    local decal = part:FindFirstChildOfClass("Decal")
+    if decal then d.decal = { texture = decal.Texture } end
+    return d
+end
+
+local queue = {}
+local function collect(c)
+    for _, ch in ipairs(c:GetChildren()) do
+        if ch:IsA("BasePart") then table.insert(queue, ch) end
+        if #ch:GetChildren() > 0 then collect(ch) end
+    end
+end
+
+print("[MapDumper] กำลังสแกน...")
+collect(workspace)
+print(string.format("[MapDumper] เจอ %d Part", #queue))
+
+local total = math.min(#queue, MAX_PARTS)
+if #queue > MAX_PARTS then dump.metadata.truncated = true end
+
+local processed = 0
+local lastReport = tick()
+
+for i = 1, total do
+    local part = queue[i]
+    if part and part.Parent then
+        local ok, data = pcall(dumpPart, part)
+        if ok then table.insert(dump.parts, data) end
+    end
+    processed = processed + 1
+    if processed % BATCH_SIZE == 0 then
+        task.wait(BATCH_WAIT)
+        if tick() - lastReport >= 1 then
+            print(string.format("[MapDumper] %d/%d (%d%%)",
+                processed, total, math.floor(processed / total * 100)))
+            lastReport = tick()
+        end
+    end
+end
+
+dump.metadata.partCount = #dump.parts
+print("[MapDumper] ประมวลเสร็จ: " .. dump.metadata.partCount .. " Part")
+
+local ok, json = pcall(function() return HttpService:JSONEncode(dump) end)
+if not ok then warn("[MapDumper] Encode ล้มเหลว"); return dump end
+
+local sizeKB = math.floor(#json / 1024)
+print("[MapDumper] ขนาด: " .. sizeKB .. " KB")
+
+local filename = "mapdump_" .. game.PlaceId .. "_" .. os.time() .. ".json"
+if hasWrite then
+    local ok2 = pcall(writefile, filename, json)
+    if ok2 then print("[MapDumper] บันทึก: " .. filename) end
+end
+
+if hasClipboard and sizeKB < 500 then
+    local b64c = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    local function b64(data)
+        local out, i, n = {}, 1, #data
+        while i <= n do
+            local b1, b2, b3 = data:byte(i) or 0, data:byte(i+1) or 0, data:byte(i+2) or 0
+            local c1 = math.floor(b1 / 4)
+            local c2 = (b1 % 4) * 16 + math.floor(b2 / 16)
+            local c3 = (b2 % 16) * 4 + math.floor(b3 / 64)
+            local c4 = b3 % 64
+            out[#out+1] = b64c:sub(c1+1, c1+1)
+            out[#out+1] = b64c:sub(c2+1, c2+1)
+            out[#out+1] = i+1 <= n and b64c:sub(c3+1, c3+1) or "="
+            out[#out+1] = i+2 <= n and b64c:sub(c4+1, c4+1) or "="
+            i = i + 3
+        end
+        return table.concat(out)
+    end
+    pcall(setclipboard, "MAPDUMP_B64:" .. game.PlaceId .. ":" .. b64(json))
+    print("[MapDumper] คัดลอก base64 แล้ว")
+end
+
+print("[MapDumper] เสร็จสิ้น — ไฟล์: " .. filename)
+return dump
